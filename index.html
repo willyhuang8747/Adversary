@@ -164,36 +164,50 @@
     var startTime = 0;
     var userPressTimes = {};
     var gifTimer = null;
-    var userDefinedKey = "Alt"; 
-    var userDefinedSpaceKey = " ";
+    // --- 核心按鍵變數 ---
+    var userDefinedKey = "Alt"; // 預設格擋鍵
+    var userDefinedSpaceKey = " "; // 預設跳躍鍵
+    var currentCaptureHandler = null;
 
     function setupKeyCapture(type) {
-        const input = (type === 'alt') ?
-        document.getElementById('customKeyInput') : document.getElementById('customSpaceInput');
+        // 1. 如果之前已經有一個監聽器在跑，先把它移除，防止多重觸發
+        if (currentCaptureHandler) {
+            window.removeEventListener('keydown', currentCaptureHandler, true);
+        }
+
+        const input = (type === 'alt') ? document.getElementById('customKeyInput') : document.getElementById('customSpaceInput');
         const oldVal = input.value;
-        input.value = "請按下鍵...";
-        const capture = function(e) {
+        input.value = "請按下按鍵...";
+        input.style.background = "#444"; 
+
+        // 2. 定義這一次的監聽邏輯
+        currentCaptureHandler = function(e) {
             e.preventDefault();
-            if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
-                const displayVal = (e.key === " ") ?
-                "Space" : e.key;
-                if (type === 'alt') {
-                    userDefinedKey = e.key;
-                    document.getElementById('displayKey').textContent = displayVal;
-                    document.querySelectorAll('.displayKeyAlt').forEach(el => el.textContent = displayVal);
-                } else {
-                    userDefinedSpaceKey = e.key;
-                    // --- 加入下方這一行來更新所有標記為 displayKeySpace 的文字 ---
-                    document.querySelectorAll('.displayKeySpace').forEach(el => el.textContent = displayVal);
-                }
-                input.value = displayVal;
-            } else {
-                input.value = oldVal;
+            e.stopPropagation();
+
+            const displayVal = (e.key === " ") ? "Space" : e.key;
+
+            // 根據傳入的 type (alt 或 space) 嚴格更新對應變數
+            if (type === 'alt') {
+                userDefinedKey = e.key; // 只更新格擋鍵
+                document.querySelectorAll('.displayKeyAlt').forEach(el => el.textContent = displayVal);
+                if(document.getElementById('displayKey')) document.getElementById('displayKey').textContent = displayVal;
+            } else if (type === 'space') {
+                userDefinedSpaceKey = e.key; // 只更新跳躍鍵
+                document.querySelectorAll('.displayKeySpace').forEach(el => el.textContent = displayVal);
             }
-            window.removeEventListener('keydown', capture);
+
+            input.value = displayVal;
+            input.style.background = "#333";
+            
+            // 3. 完成後移除監聽並清空暫存變數
+            window.removeEventListener('keydown', currentCaptureHandler, true);
+            currentCaptureHandler = null;
         };
-        window.addEventListener('keydown', capture);
-    }
+
+        // 使用 true (捕獲階段) 確保優先級最高，攔截一切系統預設鍵
+        window.addEventListener('keydown', currentCaptureHandler, true);
+    }    
     function startTrial(idx) {
         if (activeIndex !== -1) return;
         activeIndex = idx;
@@ -245,12 +259,11 @@
     }
 
     window.addEventListener('keydown', function(e) {
-        // 如果沒有在進行測驗，則不動作（允許正常捲動）
+        // 如果沒有正在進行測驗，則不執行邏輯（允許正常使用方向鍵捲動網頁）
         if (activeIndex === -1) return;
 
-        // --- 防止網頁捲動的核心邏輯 ---
-        // 阻擋：方向鍵(上下左右) 與 空白鍵 的瀏覽器預設捲動行為
-        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].indexOf(e.key) > -1) {
+        // 1. 強制攔截所有功能鍵，防止按下 Alt 彈出選單、按下 Space 或方向鍵導致網頁捲動
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Alt"].indexOf(e.key) > -1) {
             e.preventDefault();
         }
 
@@ -259,31 +272,47 @@
         
         for (var i = 0; i < config.keys.length; i++) {
             var target = config.keys[i];
-            var matchKey = target.key;
-            
-            // 轉換自定義按鍵 (Alt / Space)
-            if (target.key === "Alt") matchKey = userDefinedKey;
-            else if (target.key === " ") matchKey = userDefinedSpaceKey;
+            var isMatched = false;
 
-            // 判斷按鍵是否匹配且尚未按下
-            if (e.key === matchKey && userPressTimes[i] === undefined) {
-                // 額外保險：如果按鍵是自定義的功能鍵，再次確保不觸發預設行為
-                if (e.key === userDefinedKey || e.key === userDefinedSpaceKey || e.key === "Alt" || e.key === " ") {
-                    e.preventDefault();
+            // 2. 判定邏輯：比對當前按下的 e.key 是否符合設定
+            if (target.key === "Alt") {
+                // 如果這一關要求「格擋」：按下實體 Alt 鍵 或 使用者自訂的字母鍵都算成功
+                if (e.key === "Alt" || e.key.toLowerCase() === userDefinedKey.toLowerCase()) {
+                    isMatched = true;
                 }
+            } else if (target.key === " ") {
+                // 如果這一關要求「跳躍」：按下實體空白鍵 或 使用者自訂的字母鍵都算成功
+                if (e.key === " " || e.key.toLowerCase() === userDefinedSpaceKey.toLowerCase()) {
+                    isMatched = true;
+                }
+            } else {
+                // 其他普通按鍵 (例如方向鍵 ArrowDown 等)
+                if (e.key === target.key) {
+                    isMatched = true;
+                }
+            }
+
+            // 3. 執行按鍵成功後的動作
+            if (isMatched && userPressTimes[i] === undefined) {
+                // 再次確保如果是功能鍵則不觸發預設行為
+                if ([" ", "Alt"].indexOf(e.key) > -1) e.preventDefault();
 
                 userPressTimes[i] = currentTime;
                 
-                // 更新畫面上的秒數顯示
+                // 判斷當前是在普通模式還是連續技(Section-7)模式，以更新正確的 UI 位置
                 var sectionId = isComboMode ? "section-7" : "section-" + activeIndex;
                 var section = document.getElementById(sectionId);
+                
                 if (section) {
+                    // 尋找對應的秒數顯示標籤
                     var timeSpan = section.querySelector(".player-time-" + i) || section.querySelector(".player-time");
-                    if (timeSpan) timeSpan.textContent = currentTime.toFixed(3);
+                    if (timeSpan) {
+                        timeSpan.textContent = currentTime.toFixed(3);
+                    }
                 }
             }
         }
-    });    
+    });
     function startComboTrial() {
         isComboMode = true;
         comboPointer = 0;
@@ -366,32 +395,42 @@ function runComboStep() {
         var canvas = section.querySelector('.freeze-canvas');
         var ctx = canvas.getContext('2d');
 
-        // --- 執行定格邏輯：捕捉項目6最後一幀，停止 GIF 循環 ---
+        // --- 執行定格邏輯 ---
         canvas.width = gif.naturalWidth;
         canvas.height = gif.naturalHeight;
         ctx.drawImage(gif, 0, 0, canvas.width, canvas.height);
         
-        gif.style.display = "none";      // 隱藏持續循環的 GIF
-        canvas.style.display = "block";   // 顯示剛才抓取的靜態畫面
+        gif.style.display = "none";      
+        canvas.style.display = "block";   
 
-        // --- 自定義名稱與換行顯示 ---
+        // --- 自定義名稱與顏色顯示邏輯 ---
         var customNames = ["三連衝1", "三連衝2", "三連衝3"];
         var finalReport = [];
         var allPassed = true;
 
         for (var i = 0; i < comboSequence.length; i++) {
-            var stageName = customNames[i]; // 使用我們設定的好聽名稱
-            var res = comboResults[i];
-            var timeDetail = comboTimes[i];
+            var stageName = customNames[i];
+            var res = comboResults[i];     // "成功" 或 "失敗"
+            var timeDetail = comboTimes[i]; // 例如 "(0.123s)"
             
-            finalReport.push(stageName + ":" + res + timeDetail);
+            // 根據結果決定顏色：成功用綠色(#2ecc71)，失敗用紅色(#e74c3c)
+            var textColor = (res === "成功") ? "#2ecc71" : "#e74c3c";
+            
+            // 將每一行包裝在帶有顏色的 span 中
+            finalReport.push("<span style='color:" + textColor + "'>" + stageName + ":" + res + timeDetail + "</span>");
+            
             if (res === "失敗") allPassed = false;
         }
 
-        // 使用 innerHTML 並透過 <br> 標籤來達成換行
+        // 1. 使用 innerHTML 渲染包含顏色標籤的文字
         resultDisplay.innerHTML = finalReport.join("<br>");
-        resultDisplay.className = "result-text " + (allPassed ? "success" : "fail");
         
+        // 2. 移除原本控制整塊顏色的 success/fail class，避免覆蓋掉內層的顏色
+        resultDisplay.className = "result-text"; 
+        
+        // 如果你希望「全部成功」時背景或邊框有特殊提示，可以保留 class 但要確保 CSS 優先權
+        // resultDisplay.classList.add(allPassed ? "success" : "fail");
+
         // 恢復按鈕與狀態
         section.querySelector('.start-btn').disabled = false;
         document.getElementById("combo-stage").textContent = "完成";
